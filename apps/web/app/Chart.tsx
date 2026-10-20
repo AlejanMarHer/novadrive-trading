@@ -8,7 +8,6 @@ export default function Chart() {
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // 1. Configuramos el lienzo del gráfico
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: '#1e293b' }, 
@@ -36,29 +35,26 @@ export default function Chart() {
 
     let ws: WebSocket | null = null;
 
-    // 2. Descargamos el historial (El Pasado)
     fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=100')
       .then(res => res.json())
       .then(data => {
-        const formattedData = data.map((d: any) => ({
-          time: Math.floor(d[0] / 1000) as Time, 
-          open: parseFloat(d[1]),
-          high: parseFloat(d[2]),
-          low: parseFloat(d[3]),
-          close: parseFloat(d[4]),
+        // CORRECCIÓN: Reemplazamos 'any' por la estructura estricta de TypeScript
+        const formattedData = data.map((d: (number | string)[]) => ({
+          time: Math.floor(Number(d[0]) / 1000) as Time, 
+          open: parseFloat(String(d[1])),
+          high: parseFloat(String(d[2])),
+          low: parseFloat(String(d[3])),
+          close: parseFloat(String(d[4])),
         }));
         
-        // Pintamos las 100 velas históricas
         candlestickSeries.setData(formattedData);
 
-        // 3. LA MAGIA: Nos conectamos al flujo en vivo (El Presente/Futuro)
         ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@kline_15m');
         
         ws.onmessage = (event) => {
           const response = JSON.parse(event.data);
           if (response.e === 'kline') {
             const kline = response.k;
-            // Actualizamos dinámicamente la última vela del gráfico
             candlestickSeries.update({
               time: Math.floor(kline.t / 1000) as Time,
               open: parseFloat(kline.o),
@@ -70,7 +66,6 @@ export default function Chart() {
         };
       });
 
-    // 4. Adaptabilidad de pantalla
     const handleResize = () => {
       if (chartContainerRef.current) {
         chart.applyOptions({ width: chartContainerRef.current.clientWidth });
@@ -78,11 +73,10 @@ export default function Chart() {
     };
     window.addEventListener('resize', handleResize);
 
-    // Limpieza al cerrar la pestaña
     return () => {
       window.removeEventListener('resize', handleResize);
       chart.remove();
-      if (ws) ws.close(); // Cerramos el socket para no gastar memoria
+      if (ws) ws.close();
     };
   }, []);
 

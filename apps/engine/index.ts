@@ -1,3 +1,8 @@
+import http from 'http';
+// Servidor "latido" para engañar a Render y usar la capa gratuita
+const server = http.createServer((req, res) => res.end('Motor Cuantitativo 24/7 Activo'));
+server.listen(process.env.PORT || 3000, () => console.log('Escuchando puerto para Render'));
+
 import { EMA, ADX } from 'technicalindicators';
 import { PrismaClient } from '@prisma/client';
 
