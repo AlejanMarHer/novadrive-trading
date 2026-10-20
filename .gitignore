@@ -1,0 +1,16 @@
+# Dependencias pesadas
+node_modules/
+
+# Contraseñas y secretos
+.env
+.env.local
+
+# Archivos compilados de Next.js
+.next/
+out/
+build/
+dist/
+
+# Basura del sistema operativo
+.DS_Store
+Thumbs.db

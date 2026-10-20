@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model StrategyConfig {
+  id               String   @id @default(uuid())
+  strategyName     String   @unique 
+  isActive         Boolean  @default(true)
+  maxRiskPerTrade  Float    @default(0.75) 
+  updatedAt        DateTime @updatedAt
+}
+
+model MarketRegimeRecord {
+  id          String   @id @default(uuid())
+  timestamp   DateTime @default(now())
+  regime      String   
+  adx1h       Float?
+  emaSlope4h  Float?
+}
+
+model Signal {
+  id              String   @id @default(uuid())
+  symbol          String   @default("BTCUSDT")
+  strategy        String
+  direction       String   
+  generatedAt     DateTime @default(now())
+  entryPrice      Float
+  stopLoss        Float
+  takeProfit1     Float
+  takeProfit2     Float
+  riskRewardNet   Float    
+  probability     Float?   
+  status          String   @default("ACTIVE") 
+  closedAt        DateTime?
+  pnlNet          Float?   
+}
+
+model RejectedSignal {
+  id              String   @id @default(uuid())
+  symbol          String   @default("BTCUSDT")
+  strategy        String
+  direction       String
+  rejectedAt      DateTime @default(now())
+  reason          String   
+  riskRewardNet   Float
+}
+
+model SystemHealth {
+  id              String   @id @default(uuid())
+  timestamp       DateTime @default(now())
+  component       String   
+  status          String   
+  message         String?
+}
