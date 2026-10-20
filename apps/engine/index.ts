@@ -1,14 +1,14 @@
 import http from 'http';
-import { EMA, ADX } from 'technicalindicators';
+import { EMA, ADX, ATR } from 'technicalindicators'; // Importamos ATR
 import { PrismaClient } from '@prisma/client';
 
-const server = http.createServer((req, res) => res.end('Motor Cuantitativo 24/7 Activo'));
+const server = http.createServer((req, res) => res.end('Motor Cuantitativo 24/7 Activo (Señales Dinámicas)'));
 server.listen(process.env.PORT || 3000, () => console.log('Escuchando puerto para Render'));
 
 const prisma = new PrismaClient();
 
 console.log('===================================================');
-console.log('🤖 MOTOR CUANTITATIVO: MODO GENERADOR DE SEÑALES + TELEGRAM');
+console.log('🤖 MOTOR CUANTITATIVO: MODO GENERADOR DE SEÑALES + TELEGRAM + GESTIÓN DE RIESGO');
 console.log('===================================================');
 
 interface Vela { high: number; low: number; close: number; }
@@ -64,6 +64,15 @@ async function cicloMaestro() {
         };
         const adxResult = ADX.calculate(inputADX).pop()!;
 
+        // NUEVO: Cálculo del ATR para gestión de riesgo dinámica
+        const inputATR = {
+            high: velas1h.map(v => v.high),
+            low: velas1h.map(v => v.low),
+            close: velas1h.map(v => v.close),
+            period: 14
+        };
+        const atrValue = ATR.calculate(inputATR).pop()!;
+
         let regimenActual = 'TRANSITION_CHOP';
         if (precioActual > ema50_4h && ema21_1h > ema55_1h && adxResult.adx >= 22 && adxResult.pdi > adxResult.mdi) {
             regimenActual = 'TREND_BULL';
@@ -75,22 +84,34 @@ async function cicloMaestro() {
 
         console.log(`🎯 Régimen Detectado: ${regimenActual}`);
 
-        // === GENERADOR DE SEÑALES PARA EJECUCIÓN MANUAL ===
+        // === GENERADOR DE SEÑALES CON GESTIÓN DE RIESGO (SL/TP) ===
         let senalRecomendada = 'ESPERAR';
         let mensajeTelegram = '';
+
+        // Multiplicador del ATR (Distancia de seguridad)
+        const atrMultiplier = 1.5; 
+        const volatilidad = atrValue * atrMultiplier;
 
         if (regimenActual === 'TREND_BULL') {
             senalRecomendada = 'COMPRAR (LONG)';
             console.log(`🟢 SEÑAL DE TRADING: ${senalRecomendada}`);
-            mensajeTelegram = `🟢 <b>NUEVA SEÑAL: LONG (COMPRA)</b>\n\n🎯 <b>Régimen:</b> ${regimenActual}\n📊 <b>ADX 1H:</b> ${adxResult.adx.toFixed(2)}\n💰 <b>Precio:</b> $${precioActual.toFixed(2)}\n\n👉 <a href="https://testnet.binancefuture.com/en/futures/BTCUSDT">Abrir Binance Testnet</a>`;
+            
+            const stopLoss = precioActual - volatilidad;
+            const takeProfit = precioActual + (volatilidad * 2); // R/B 1:2
+
+            mensajeTelegram = `🟢 <b>NUEVA SEÑAL: LONG (COMPRA)</b>\n\n🎯 <b>Régimen:</b> ${regimenActual}\n📊 <b>ADX 1H:</b> ${adxResult.adx.toFixed(2)}\n💰 <b>Precio de Entrada:</b> $${precioActual.toFixed(2)}\n\n🛡️ <b>Gestión de Riesgo Sugerida:</b>\n🛑 <b>Stop Loss:</b> $${stopLoss.toFixed(2)}\n🎯 <b>Take Profit:</b> $${takeProfit.toFixed(2)}\n\n👉 <a href="https://testnet.binancefuture.com/en/futures/BTCUSDT">Abrir Binance Testnet</a>`;
+            
         } else if (regimenActual === 'TREND_BEAR') {
             senalRecomendada = 'VENDER (SHORT)';
             console.log(`🔴 SEÑAL DE TRADING: ${senalRecomendada}`);
-             mensajeTelegram = `🔴 <b>NUEVA SEÑAL: SHORT (VENTA)</b>\n\n🎯 <b>Régimen:</b> ${regimenActual}\n📊 <b>ADX 1H:</b> ${adxResult.adx.toFixed(2)}\n💰 <b>Precio:</b> $${precioActual.toFixed(2)}\n\n👉 <a href="https://testnet.binancefuture.com/en/futures/BTCUSDT">Abrir Binance Testnet</a>`;
+            
+            const stopLoss = precioActual + volatilidad;
+            const takeProfit = precioActual - (volatilidad * 2); // R/B 1:2
+
+             mensajeTelegram = `🔴 <b>NUEVA SEÑAL: SHORT (VENTA)</b>\n\n🎯 <b>Régimen:</b> ${regimenActual}\n📊 <b>ADX 1H:</b> ${adxResult.adx.toFixed(2)}\n💰 <b>Precio de Entrada:</b> $${precioActual.toFixed(2)}\n\n🛡️ <b>Gestión de Riesgo Sugerida:</b>\n🛑 <b>Stop Loss:</b> $${stopLoss.toFixed(2)}\n🎯 <b>Take Profit:</b> $${takeProfit.toFixed(2)}\n\n👉 <a href="https://testnet.binancefuture.com/en/futures/BTCUSDT">Abrir Binance Testnet</a>`;
+             
         } else {
             console.log(`🟡 SEÑAL DE TRADING: ESPERAR -> Mercado lateral. Protege tu capital.`);
-            // Opcional: Descomenta la siguiente línea si quieres que te avise también cuando el mercado está quieto.
-            // mensajeTelegram = `🟡 <b>MERCADO LATERAL</b>\n\nEl ADX está bajo (${adxResult.adx.toFixed(2)}). Se recomienda proteger capital y no abrir posiciones.`;
         }
 
         // Enviar la señal al celular
