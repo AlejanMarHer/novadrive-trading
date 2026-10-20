@@ -1,5 +1,4 @@
 import http from 'http';
-import ccxt from 'ccxt';
 import { EMA, ADX } from 'technicalindicators';
 import { PrismaClient } from '@prisma/client';
 
@@ -8,23 +7,8 @@ server.listen(process.env.PORT || 3000, () => console.log('Escuchando puerto par
 
 const prisma = new PrismaClient();
 
-// === CONFIGURACIÓN DEL EXCHANGE ===
-const exchange = new ccxt.binance({
-    apiKey: process.env.BINANCE_API_KEY,
-    secret: process.env.BINANCE_SECRET,
-    enableRateLimit: true,
-    options: {
-        defaultType: 'future', // Operar en futuros
-    }
-});
-
-// 🛡️ EL BYPASS: Engañamos a CCXT inyectando las URLs de la nueva Testnet manualmente
-exchange.urls.api.fapiPublic = 'https://testnet.binancefuture.com/fapi/v1';
-exchange.urls.api.fapiPrivate = 'https://testnet.binancefuture.com/fapi/v1';
-exchange.urls.api.fapiPrivateV2 = 'https://testnet.binancefuture.com/fapi/v2';
-
 console.log('===================================================');
-console.log('🤖 MOTOR CUANTITATIVO: FASE DE EJECUCIÓN (TESTNET)');
+console.log('🤖 MOTOR CUANTITATIVO: MODO GENERADOR DE SEÑALES');
 console.log('===================================================');
 
 interface Vela { high: number; low: number; close: number; }
@@ -43,14 +27,7 @@ async function descargarVelas(intervalo: string, limite: number): Promise<Vela[]
 
 async function cicloMaestro() {
     try {
-        console.log('\n📥 1. Evaluando el mercado...');
-        
-        if (process.env.BINANCE_API_KEY) {
-            const balance = await exchange.fetchBalance();
-            console.log(`🏦 Saldo Demo Disponible: ${balance.USDT?.free?.toFixed(2) || '0.00'} USDT ficticios`);
-        } else {
-            console.log('⚠️ Llaves de API no detectadas.');
-        }
+        console.log('\n📥 1. Evaluando el mercado global de Binance...');
 
         const velas1h = await descargarVelas('1h', 100);
         const velas4h = await descargarVelas('4h', 100);
@@ -79,35 +56,28 @@ async function cicloMaestro() {
 
         console.log(`🎯 Régimen Detectado: ${regimenActual}`);
 
-        // === 🚀 EL GATILLO: EJECUCIÓN DE ÓRDENES EN LA TESTNET ===
-        // Configuramos la orden. CCXT usa la barra inclinada estándar.
-        const simboloCCXT = 'BTC/USDT';
-        // 0.005 BTC son aproximadamente $400 USD. Tamaño conservador para pruebas.
-        const cantidadBTC = 0.005; 
-
+        // === GENERADOR DE SEÑALES PARA EJECUCIÓN MANUAL ===
+        let senalRecomendada = 'ESPERAR';
         if (regimenActual === 'TREND_BULL') {
-            console.log('🚀 SEÑAL CONFIRMADA: Disparando LONG al mercado...');
-            // exchange.createMarketBuyOrder(PAR, TAMAÑO) lanza la orden de compra inmediata
-            const orden = await exchange.createMarketBuyOrder(simboloCCXT, cantidadBTC);
-            console.log(`✅ LONG EJECUTADO: ID ${orden.id} a precio $${orden.average || orden.price}`);
+            senalRecomendada = 'COMPRAR (LONG)';
+            console.log(`🟢 SEÑAL DE TRADING: ${senalRecomendada} -> Entrar al mercado ahora.`);
         } else if (regimenActual === 'TREND_BEAR') {
-            console.log('🩸 SEÑAL CONFIRMADA: Disparando SHORT al mercado...');
-            // exchange.createMarketSellOrder(PAR, TAMAÑO) lanza la orden de venta (cortos)
-            const orden = await exchange.createMarketSellOrder(simboloCCXT, cantidadBTC);
-            console.log(`✅ SHORT EJECUTADO: ID ${orden.id} a precio $${orden.average || orden.price}`);
+            senalRecomendada = 'VENDER (SHORT)';
+            console.log(`🔴 SEÑAL DE TRADING: ${senalRecomendada} -> Entrar al mercado ahora.`);
         } else {
-            console.log('⏳ SEÑAL: Mercado lateral. El gatillo se mantiene bloqueado para proteger capital.');
+            console.log(`🟡 SEÑAL DE TRADING: ${senalRecomendada} -> Mercado lateral. Protege tu capital.`);
         }
 
-        console.log('💾 2. Guardando registro en Supabase...');
+        console.log('💾 2. Guardando registro y señal en Supabase...');
         const registro = await prisma.marketRegimeRecord.create({
             data: { regime: regimenActual, adx1h: adxResult.adx, emaSlope4h: 0 }
         });
-        console.log(`✅ Registro guardado con ID: ${registro.id}`);
+        
+        console.log(`✅ Registro exitoso en la nube. ¡Vercel actualizado!`);
         console.log('===================================================');
 
     } catch (error) {
-        console.error('❌ Error en el ciclo maestro o en el exchange:', error);
+        console.error('❌ Error en el ciclo maestro:', error);
     } finally {
         await prisma.$disconnect();
     }
@@ -117,6 +87,6 @@ async function cicloMaestro() {
 cicloMaestro();
 const MINUTOS = 15;
 setInterval(() => {
-    console.log(`\n⏳ [RELOJ] Iniciando nuevo análisis...`);
+    console.log(`\n⏳ [RELOJ] Iniciando nuevo escaneo del mercado...`);
     cicloMaestro();
 }, MINUTOS * 60 * 1000);
