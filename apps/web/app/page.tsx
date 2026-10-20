@@ -8,11 +8,11 @@ export default function Dashboard() {
   const [precio, setPrecio] = useState<string>("Cargando...");
   const [colorPrecio, setColorPrecio] = useState<string>("text-slate-50");
   
-  // Nuevos estados para la Base de Datos
+  // Estados para la Base de Datos
   const [regimen, setRegimen] = useState<string>("Consultando BD...");
   const [adx, setAdx] = useState<number | null>(null);
 
-  // 1. WebSocket del Precio
+  // 1. WebSocket del Precio (Binance En Vivo)
   useEffect(() => {
     const ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@bookTicker');
     ws.onmessage = (event) => {
@@ -51,7 +51,7 @@ export default function Dashboard() {
     return () => clearInterval(intervalo);
   }, []);
 
-  // Elegimos el color de la tarjeta según el régimen detectado
+  // Elegimos el color de la tarjeta superior según el régimen detectado
   const colorRegimen = regimen.includes('BULL') ? 'text-emerald-400' : regimen.includes('BEAR') ? 'text-red-400' : 'text-yellow-400';
 
   return (
@@ -62,6 +62,7 @@ export default function Dashboard() {
         <p className="text-slate-400 mt-1">Motor Cuantitativo BTCUSDT 24/7</p>
       </header>
 
+      {/* TARJETAS SUPERIORES */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
           <h2 className="text-sm text-slate-400 mb-1">Precio BTCUSDT (En vivo)</h2>
@@ -74,7 +75,6 @@ export default function Dashboard() {
           </span>
         </div>
         
-        {/* TARJETA VIVA: CONECTADA A SUPABASE */}
         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
           <h2 className="text-sm text-slate-400 mb-1">Régimen de Mercado (Nube)</h2>
           <p className={`text-xl font-bold mt-1 ${colorRegimen}`}>{regimen}</p>
@@ -90,24 +90,36 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* SECCIÓN INFERIOR: GRÁFICO Y PANEL DE SEÑALES */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         <div className="lg:col-span-2 bg-slate-800 p-1 rounded-xl border border-slate-700 shadow-lg min-h-[400px]">
           <Chart />
         </div>
 
+        {/* NUEVO PANEL DINÁMICO DE SEÑALES */}
         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
-          <h2 className="text-lg font-bold mb-4 border-b border-slate-700 pb-2 text-slate-200">Últimas Decisiones</h2>
+          <h2 className="text-lg font-bold mb-4 border-b border-slate-700 pb-2 text-slate-200">Señal del Algoritmo</h2>
           
           <div className="space-y-4">
-            <div className="bg-slate-900/50 p-4 rounded-lg border border-emerald-900/50">
+            <div className={`p-4 rounded-lg border transition-colors duration-300 ${regimen.includes('BULL') ? 'bg-emerald-900/30 border-emerald-500/50' : regimen.includes('BEAR') ? 'bg-red-900/30 border-red-500/50' : 'bg-yellow-900/30 border-yellow-500/50'}`}>
               <div className="flex justify-between items-center mb-2">
-                <span className="bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded text-xs font-bold border border-emerald-500/30">LONG APROBADA</span>
-                <span className="text-xs text-slate-500">Backtest V2</span>
+                <span className={`px-2 py-1 rounded text-xs font-bold border ${regimen.includes('BULL') ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : regimen.includes('BEAR') ? 'bg-red-500/20 text-red-400 border-red-500/30' : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'}`}>
+                  {regimen.includes('BULL') ? '🟢 LONG (COMPRA)' : regimen.includes('BEAR') ? '🔴 SHORT (VENTA)' : '🟡 ESPERAR (RANGO)'}
+                </span>
+                <span className="text-xs text-slate-500 font-medium">Señal en Vivo</span>
               </div>
-              <div className="space-y-1 mt-3">
-                <p className="text-sm text-slate-300 flex justify-between"><span>Entrada:</span> <span className="font-mono">$81,062.2</span></p>
-                <p className="text-sm text-slate-300 flex justify-between"><span>Take Profit:</span> <span className="font-mono text-emerald-400">$81,800.0</span></p>
+              
+              <div className="space-y-1 mt-4">
+                <p className="text-sm text-slate-300 flex justify-between items-center">
+                  <span>Acción Sugerida:</span> 
+                  <span className={`font-mono font-bold text-right ${regimen.includes('BULL') ? 'text-emerald-400' : regimen.includes('BEAR') ? 'text-red-400' : 'text-yellow-400'}`}>
+                    {regimen.includes('BULL') || regimen.includes('BEAR') ? 'Ejecutar en Testnet' : 'Proteger Capital'}
+                  </span>
+                </p>
+                <p className="text-xs text-slate-500 mt-3 text-center pt-3 border-t border-slate-700/50">
+                  El motor cuantitativo evalúa la acción del precio en segundo plano cada 15 minutos.
+                </p>
               </div>
             </div>
           </div>

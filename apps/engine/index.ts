@@ -8,10 +8,29 @@ server.listen(process.env.PORT || 3000, () => console.log('Escuchando puerto par
 const prisma = new PrismaClient();
 
 console.log('===================================================');
-console.log('🤖 MOTOR CUANTITATIVO: MODO GENERADOR DE SEÑALES');
+console.log('🤖 MOTOR CUANTITATIVO: MODO GENERADOR DE SEÑALES + TELEGRAM');
 console.log('===================================================');
 
 interface Vela { high: number; low: number; close: number; }
+
+// === PUENTE DE COMUNICACIÓN CON TELEGRAM ===
+async function enviarTelegram(mensaje: string) {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.TELEGRAM_CHAT_ID;
+    if (!token || !chatId) return;
+    
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    try {
+        await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, text: mensaje, parse_mode: 'HTML', disable_web_page_preview: true })
+        });
+        console.log('📱 ¡Alerta enviada a Telegram exitosamente!');
+    } catch (error) {
+        console.error('❌ Error enviando a Telegram:', error);
+    }
+}
 
 async function descargarVelas(intervalo: string, limite: number): Promise<Vela[]> {
     const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${intervalo}&limit=${limite}`;
@@ -58,22 +77,33 @@ async function cicloMaestro() {
 
         // === GENERADOR DE SEÑALES PARA EJECUCIÓN MANUAL ===
         let senalRecomendada = 'ESPERAR';
+        let mensajeTelegram = '';
+
         if (regimenActual === 'TREND_BULL') {
             senalRecomendada = 'COMPRAR (LONG)';
-            console.log(`🟢 SEÑAL DE TRADING: ${senalRecomendada} -> Entrar al mercado ahora.`);
+            console.log(`🟢 SEÑAL DE TRADING: ${senalRecomendada}`);
+            mensajeTelegram = `🟢 <b>NUEVA SEÑAL: LONG (COMPRA)</b>\n\n🎯 <b>Régimen:</b> ${regimenActual}\n📊 <b>ADX 1H:</b> ${adxResult.adx.toFixed(2)}\n💰 <b>Precio:</b> $${precioActual.toFixed(2)}\n\n👉 <a href="https://testnet.binancefuture.com/en/futures/BTCUSDT">Abrir Binance Testnet</a>`;
         } else if (regimenActual === 'TREND_BEAR') {
             senalRecomendada = 'VENDER (SHORT)';
-            console.log(`🔴 SEÑAL DE TRADING: ${senalRecomendada} -> Entrar al mercado ahora.`);
+            console.log(`🔴 SEÑAL DE TRADING: ${senalRecomendada}`);
+             mensajeTelegram = `🔴 <b>NUEVA SEÑAL: SHORT (VENTA)</b>\n\n🎯 <b>Régimen:</b> ${regimenActual}\n📊 <b>ADX 1H:</b> ${adxResult.adx.toFixed(2)}\n💰 <b>Precio:</b> $${precioActual.toFixed(2)}\n\n👉 <a href="https://testnet.binancefuture.com/en/futures/BTCUSDT">Abrir Binance Testnet</a>`;
         } else {
-            console.log(`🟡 SEÑAL DE TRADING: ${senalRecomendada} -> Mercado lateral. Protege tu capital.`);
+            console.log(`🟡 SEÑAL DE TRADING: ESPERAR -> Mercado lateral. Protege tu capital.`);
+            // Opcional: Descomenta la siguiente línea si quieres que te avise también cuando el mercado está quieto.
+            // mensajeTelegram = `🟡 <b>MERCADO LATERAL</b>\n\nEl ADX está bajo (${adxResult.adx.toFixed(2)}). Se recomienda proteger capital y no abrir posiciones.`;
         }
 
-        console.log('💾 2. Guardando registro y señal en Supabase...');
+        // Enviar la señal al celular
+        if (mensajeTelegram !== '') {
+            await enviarTelegram(mensajeTelegram);
+        }
+
+        console.log('💾 2. Guardando registro en Supabase...');
         const registro = await prisma.marketRegimeRecord.create({
             data: { regime: regimenActual, adx1h: adxResult.adx, emaSlope4h: 0 }
         });
         
-        console.log(`✅ Registro exitoso en la nube. ¡Vercel actualizado!`);
+        console.log(`✅ Ciclo finalizado. Registro ID: ${registro.id}`);
         console.log('===================================================');
 
     } catch (error) {
@@ -83,10 +113,9 @@ async function cicloMaestro() {
     }
 }
 
-// Ejecución inicial y bucle
 cicloMaestro();
 const MINUTOS = 15;
 setInterval(() => {
-    console.log(`\n⏳ [RELOJ] Iniciando nuevo escaneo del mercado...`);
+    console.log(`\n⏳ [RELOJ] Iniciando escaneo...`);
     cicloMaestro();
 }, MINUTOS * 60 * 1000);
