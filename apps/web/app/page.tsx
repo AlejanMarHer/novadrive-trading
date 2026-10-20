@@ -32,12 +32,17 @@ export default function Dashboard() {
   // 2. Consulta Automática a Supabase (Cada 10 segundos)
   useEffect(() => {
     const consultarBaseDeDatos = async () => {
-      const datos = await obtenerUltimoRegimen();
-      if (datos) {
-        setRegimen(datos.regime);
-        setAdx(datos.adx1h);
-      } else {
-        setRegimen("Sin datos en la nube");
+      try {
+        const datos = await obtenerUltimoRegimen();
+        if (datos) {
+          setRegimen(datos.regime);
+          setAdx(datos.adx1h);
+        } else {
+          setRegimen("Sin datos en la nube");
+        }
+      } catch (error) {
+        console.error("Error leyendo BD:", error);
+        setRegimen("Error de conexión");
       }
     };
 
