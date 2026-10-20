@@ -13,14 +13,24 @@ console.log('===================================================');
 console.log('🤖 MOTOR CUANTITATIVO: UNIFICACIÓN Y BASE DE DATOS');
 console.log('===================================================');
 
-async function descargarVelas(intervalo: string, limite: number) {
+// 1. Definimos la estructura matemática estricta para TypeScript
+interface Vela {
+    high: number;
+    low: number;
+    close: number;
+}
+
+// 2. Le indicamos a la función que devolverá un arreglo de tipo "Vela"
+async function descargarVelas(intervalo: string, limite: number): Promise<Vela[]> {
     const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${intervalo}&limit=${limite}`;
     const respuesta = await fetch(url);
     const datos = await respuesta.json();
-    return datos.map((vela: any) => ({
-        high: parseFloat(vela[2]),
-        low: parseFloat(vela[3]),
-        close: parseFloat(vela[4])
+    
+    // 3. Eliminamos el 'any' del mapeo de Binance
+    return datos.map((vela: (string | number)[]) => ({
+        high: parseFloat(String(vela[2])),
+        low: parseFloat(String(vela[3])),
+        close: parseFloat(String(vela[4]))
     }));
 }
 
@@ -32,6 +42,7 @@ async function cicloMaestro() {
         const velas1h = await descargarVelas('1h', 100);
         const velas4h = await descargarVelas('4h', 100);
 
+        // Al usar la interfaz "Vela", TypeScript ya sabe perfectamente qué es la "v" aquí
         const cierres4h = velas4h.map(v => v.close);
         const cierres1h = velas1h.map(v => v.close);
         
