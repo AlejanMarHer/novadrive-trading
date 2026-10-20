@@ -6,27 +6,34 @@ server.listen(process.env.PORT || 3000, () => console.log('Escuchando puerto par
 import { EMA, ADX } from 'technicalindicators';
 import { PrismaClient } from '@prisma/client';
 
-// Inicializamos la conexión a la base de datos (Supabase)
 const prisma = new PrismaClient();
 
 console.log('===================================================');
 console.log('🤖 MOTOR CUANTITATIVO: UNIFICACIÓN Y BASE DE DATOS');
 console.log('===================================================');
 
-// 1. Definimos la estructura matemática estricta para TypeScript
 interface Vela {
     high: number;
     low: number;
     close: number;
 }
 
-// 2. Le indicamos a la función que devolverá un arreglo de tipo "Vela"
 async function descargarVelas(intervalo: string, limite: number): Promise<Vela[]> {
     const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${intervalo}&limit=${limite}`;
-    const respuesta = await fetch(url);
-    const datos = await respuesta.json();
     
-    // 3. Eliminamos el 'any' del mapeo de Binance
+    // 1. Escudo Antibot: Simulamos ser un navegador real
+    const respuesta = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+    });
+    
+    const datos = await respuesta.json();
+
+    // 2. Escudo Geográfico: Detectamos si Binance nos arroja un error en vez de velas
+    if (!Array.isArray(datos)) {
+        console.error(`🚨 BLOQUEO DE BINANCE DETECTADO (${intervalo}):`, datos);
+        throw new Error(`Respuesta inválida de la API: ${JSON.stringify(datos)}`);
+    }
+
     return datos.map((vela: (string | number)[]) => ({
         high: parseFloat(String(vela[2])),
         low: parseFloat(String(vela[3])),
@@ -38,11 +45,9 @@ async function cicloMaestro() {
     try {
         console.log('📥 1. Evaluando el mercado...');
         
-        // Descargamos 1H y 4H para el Régimen
         const velas1h = await descargarVelas('1h', 100);
         const velas4h = await descargarVelas('4h', 100);
 
-        // Al usar la interfaz "Vela", TypeScript ya sabe perfectamente qué es la "v" aquí
         const cierres4h = velas4h.map(v => v.close);
         const cierres1h = velas1h.map(v => v.close);
         
@@ -59,7 +64,6 @@ async function cicloMaestro() {
         };
         const adxResult = ADX.calculate(inputADX).pop()!;
 
-        // Clasificador matemático
         let regimenActual = 'TRANSITION_CHOP';
         if (precioActual > ema50_4h && ema21_1h > ema55_1h && adxResult.adx >= 22 && adxResult.pdi > adxResult.mdi) {
             regimenActual = 'TREND_BULL';
@@ -70,15 +74,12 @@ async function cicloMaestro() {
         }
 
         console.log(`🎯 Régimen Detectado: ${regimenActual}`);
-        console.log('💾 2. Guardando registro en Supabase (Base de Datos)...');
+        console.log('💾 2. Guardando registro en Supabase...');
 
-        // === MAGIA DE BASE DE DATOS ===
-        // Le ordenamos a Prisma que guarde este dato en la tabla MarketRegimeRecord
         const registro = await prisma.marketRegimeRecord.create({
             data: {
                 regime: regimenActual,
                 adx1h: adxResult.adx,
-                // Como simplificación temporal, no guardamos la pendiente 4H para no alargar el código
                 emaSlope4h: 0 
             }
         });
@@ -90,9 +91,18 @@ async function cicloMaestro() {
     } catch (error) {
         console.error('❌ Error crítico en el ciclo maestro:', error);
     } finally {
-        // Desconectamos la base de datos limpiamente
         await prisma.$disconnect();
     }
 }
 
+// Ejecutar inmediatamente al encender el servidor
 cicloMaestro();
+
+// Configurar el reloj para que se repita automáticamente cada 15 minutos
+const MINUTOS = 15;
+const INTERVALO_MS = MINUTOS * 60 * 1000;
+
+setInterval(() => {
+    console.log(`\n⏳ [RELOJ] Iniciando nuevo análisis programado tras ${MINUTOS} minutos...`);
+    cicloMaestro();
+}, INTERVALO_MS);
