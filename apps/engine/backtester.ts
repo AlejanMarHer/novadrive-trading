@@ -1,150 +1,121 @@
-import { ADX, ATR } from 'technicalindicators';
+/**
+ * Backtester de NovaDrive.
+ *
+ * Uso:
+ *   npm run backtest                                  # estrategia en vivo, 365 días
+ *   npm run backtest -- --dias=730                    # más historia
+ *   npm run backtest -- --estrategia=barrido --dias=180   # estrategia V2 (barrido 15m)
+ *
+ * La estrategia "tendencia" usa EXACTAMENTE el mismo código que el motor en vivo
+ * (lib/estrategia.ts). Supuestos de la simulación: ver lib/simulador.ts.
+ */
 
-console.log('===================================================');
-console.log('🔬 MOTOR CUANTITATIVO: BACKTESTING MULTITEMPORAL V2');
-console.log('===================================================');
+import { descargarHistorial } from './lib/binance';
+import {
+    calcularMetricas,
+    PARAMETROS_POR_DEFECTO,
+    simularBarrido,
+    simularTendencia,
+    type ResultadoSimulacion,
+} from './lib/simulador';
 
-const RIESGO_MAXIMO_PORCENTAJE = 0.75; 
-const CAPITAL_INICIAL = 10000;         
-const COMISION_TAKER = 0.0005;         
-const SLIPPAGE_BASE_BPS = 1.5;         
+const DIA_MS = 24 * 60 * 60 * 1000;
+const MUESTRA_MINIMA = 30;
 
-async function descargarHistorialLargo(intervalo: string, limite: number) {
-    const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${intervalo}&limit=${limite}`;
-    const respuesta = await fetch(url);
-    const datos = await respuesta.json();
-    return datos.map((vela: any) => ({
-        timestamp: new Date(vela[0]),
-        open: parseFloat(vela[1]),
-        high: parseFloat(vela[2]),
-        low: parseFloat(vela[3]),
-        close: parseFloat(vela[4])
-    }));
+function leerArgumento(nombre: string, porDefecto: string): string {
+    const encontrado = process.argv.find(a => a.startsWith(`--${nombre}=`));
+    return encontrado ? encontrado.split('=')[1] : porDefecto;
 }
 
-async function ejecutarBacktestOptimizado() {
-    try {
-        console.log('📥 1. Descargando datos paralelos (15m y 1h)...');
-        
-        // Descargamos las velas de 15m (Estrategia) y de 1h (Contexto de Régimen)
-        const velas15m = await descargarHistorialLargo('15m', 1000);
-        const velas1h = await descargarHistorialLargo('1h', 250); 
-        
-        console.log(`✅ ¡Se descargaron ${velas15m.length} velas de 15m y ${velas1h.length} velas de 1h!`);
+const fecha = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+const usd = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-        console.log('⚙️ 2. Calculando estructura matemática base...');
-        const inputATR = {
-            high: velas15m.map(v => v.high),
-            low: velas15m.map(v => v.low),
-            close: velas15m.map(v => v.close),
-            period: 14
-        };
-        const arrayATR = ATR.calculate(inputATR);
-
-        let balanceActual = CAPITAL_INICIAL;
-        let operacionesTotales = 0;
-        let operacionesGanadoras = 0;
-        let operacionesPerdedoras = 0;
-        let operacionesFiltradas = 0; // El "salvavidas" que cuenta cuántos Stops evitamos
-
-        console.log('⏱️ 3. Iniciando simulación con Filtro de Régimen activado...');
-        console.log('---------------------------------------------------\n');
-
-        for (let i = 50; i < velas15m.length - 1; i++) {
-            const velaCerrada = velas15m[i];
-            const atrActual = arrayATR[i - 14]; 
-            
-            const ultimas20 = velas15m.slice(i - 20, i);
-            const soporte20 = Math.min(...ultimas20.map(v => v.low));
-            const resistencia20 = Math.max(...ultimas20.map(v => v.high));
-
-            const filtroBarridoLong = velaCerrada.low <= (soporte20 - 0.15 * atrActual);
-            const filtroReclamoLong = velaCerrada.close > soporte20;
-
-            if (filtroBarridoLong && filtroReclamoLong) {
-                // === NUEVO: FILTRO DE RÉGIMEN MULTITEMPORAL (1H) ===
-                // Buscamos las velas de 1H cuyo timestamp sea ANTERIOR a la vela de 15m actual
-                // (Para evitar el temido 'look-ahead bias' o adivinación del futuro)
-                const historia1hDisponible = velas1h.filter(v => v.timestamp <= velaCerrada.timestamp);
-                
-                // Si tenemos suficiente historia de 1H para calcular el ADX (14)
-                if (historia1hDisponible.length >= 28) {
-                    const inputADX_1h = {
-                        high: historia1hDisponible.map(v => v.high),
-                        low: historia1hDisponible.map(v => v.low),
-                        close: historia1hDisponible.map(v => v.close),
-                        period: 14
-                    };
-                    const adxHistorico = ADX.calculate(inputADX_1h).pop()!;
-                    
-                    // Nuestra Regla de Oro: Si el mercado tiene tendencia fuerte (ADX >= 20)
-                    // Abortamos la trampa de liquidez porque nos van a atropellar.
-                    if (adxHistorico.adx >= 20) {
-                        operacionesFiltradas++;
-                        console.log(`[${velaCerrada.timestamp.toISOString().split('T')[0]}] 🛡️ SEÑAL BLOQUEADA: ADX 1h en ${adxHistorico.adx.toFixed(1)} (Evitamos operar contra tendencia)`);
-                        continue; // Saltamos a la siguiente vela sin abrir operación
-                    }
-                }
-
-                // === SI SOBREVIVE EL FILTRO, EJECUTAMOS LA SIMULACIÓN ===
-                operacionesTotales++;
-                const precioEntradaTeorico = velaCerrada.close;
-                const penalizacionSlippage = precioEntradaTeorico * (SLIPPAGE_BASE_BPS / 10000);
-                const precioEntradaReal = precioEntradaTeorico + penalizacionSlippage;
-
-                const stopLoss = velaCerrada.low - 0.35 * atrActual;
-                const riesgoBruto = precioEntradaReal - stopLoss;
-                const takeProfit = precioEntradaReal + (riesgoBruto * 1.6); 
-
-                const comisionApertura = precioEntradaReal * COMISION_TAKER;
-                
-                let resultadoOperacion = 'ABIERTA';
-                for (let j = i + 1; j < Math.min(i + 16, velas15m.length); j++) {
-                    const velaFutura = velas15m[j];
-                    if (velaFutura.low <= stopLoss) {
-                        resultadoOperacion = 'PERDIDA (SL)';
-                        balanceActual -= (balanceActual * (RIESGO_MAXIMO_PORCENTAJE / 100));
-                        operacionesPerdedoras++;
-                        break;
-                    } else if (velaFutura.high >= takeProfit) {
-                        resultadoOperacion = 'GANADA (TP)';
-                        const beneficioBruto = (balanceActual * (RIESGO_MAXIMO_PORCENTAJE / 100)) * 1.6;
-                        balanceActual += (beneficioBruto * (1 - COMISION_TAKER)); 
-                        operacionesGanadoras++;
-                        break;
-                    }
-                }
-                
-                if (resultadoOperacion === 'ABIERTA') {
-                     resultadoOperacion = 'CERRADA POR TIEMPO';
-                     balanceActual -= (balanceActual * COMISION_TAKER); 
-                }
-
-                console.log(`[${velaCerrada.timestamp.toISOString().split('T')[0]}] 🟢 Señal LONG (Aprobada) | Resultado: ${resultadoOperacion} | Balance: $${balanceActual.toFixed(2)}`);
-                i += 5; 
-            }
-        }
-
-        console.log('\n===================================================');
-        console.log('📊 REPORTE DE RENDIMIENTO (V2 - FILTRO MULTITEMPORAL):');
-        console.log(`   🔸 Capital Inicial:   $${CAPITAL_INICIAL.toFixed(2)} USDT`);
-        console.log(`   🔸 Capital Final:     $${balanceActual.toFixed(2)} USDT`);
-        
-        const retornoNeto = ((balanceActual - CAPITAL_INICIAL) / CAPITAL_INICIAL) * 100;
-        const colorRetorno = retornoNeto > 0 ? '🟩' : '🟥';
-        console.log(`   🔸 Retorno Neto:      ${colorRetorno} ${retornoNeto.toFixed(2)}%`);
-        
-        console.log(`   🔸 Operaciones Ejecutadas: ${operacionesTotales}`);
-        console.log(`   🔸 Operaciones Bloqueadas: ${operacionesFiltradas} (Capital salvado)`);
-        
-        if (operacionesTotales > 0) {
-            console.log(`   🔸 Win Rate:               ${((operacionesGanadoras / operacionesTotales) * 100).toFixed(1)}% (${operacionesGanadoras}G / ${operacionesPerdedoras}P)`);
-        }
-        console.log('===================================================\n');
-
-    } catch (error) {
-        console.error('❌ Error en el backtesting:', error);
+async function main() {
+    const estrategia = leerArgumento('estrategia', 'tendencia');
+    const dias = Number(leerArgumento('dias', '365'));
+    const detalle = process.argv.includes('--detalle');
+    if (!['tendencia', 'barrido'].includes(estrategia) || !Number.isFinite(dias) || dias <= 0) {
+        throw new Error('Uso: --estrategia=tendencia|barrido --dias=N [--detalle]');
     }
+
+    const hasta = Date.now();
+    // Margen extra para que los indicadores (EMA50 en 4h ≈ 9 días) estén estables.
+    const desde = hasta - (dias + 30) * DIA_MS;
+    const inicioEvaluacion = hasta - dias * DIA_MS;
+
+    console.log('===================================================');
+    console.log(`🔬 BACKTEST "${estrategia}" — últimos ${dias} días`);
+    console.log('===================================================');
+
+    let resultado: ResultadoSimulacion;
+    let precioInicial: number;
+    let precioFinal: number;
+
+    if (estrategia === 'tendencia') {
+        console.log('📥 Descargando velas de 1h y 4h...');
+        const [velas1h, velas4h] = await Promise.all([
+            descargarHistorial('1h', desde, hasta),
+            descargarHistorial('4h', desde, hasta),
+        ]);
+        console.log(`✅ ${velas1h.length} velas 1h y ${velas4h.length} velas 4h.`);
+        resultado = simularTendencia(velas1h, velas4h);
+        const evaluadas = velas1h.filter(v => v.openTime >= inicioEvaluacion);
+        precioInicial = evaluadas[0].open;
+        precioFinal = evaluadas[evaluadas.length - 1].close;
+    } else {
+        console.log('📥 Descargando velas de 15m y 1h...');
+        const [velas15m, velas1h] = await Promise.all([
+            descargarHistorial('15m', desde, hasta),
+            descargarHistorial('1h', desde, hasta),
+        ]);
+        console.log(`✅ ${velas15m.length} velas 15m y ${velas1h.length} velas 1h.`);
+        resultado = simularBarrido(velas15m, velas1h);
+        const evaluadas = velas15m.filter(v => v.openTime >= inicioEvaluacion);
+        precioInicial = evaluadas[0].open;
+        precioFinal = evaluadas[evaluadas.length - 1].close;
+    }
+
+    // Solo cuentan las operaciones dentro del periodo pedido (el margen inicial es calentamiento).
+    const capitalInicial = PARAMETROS_POR_DEFECTO.capitalInicial;
+    const operaciones = resultado.operaciones.filter(o => o.tiempoEntrada >= inicioEvaluacion);
+    let capital = capitalInicial;
+    const recalculadas = operaciones.map(o => {
+        const factor = capital / (o.capitalDespues - o.pnlUsd);
+        const pnlUsd = o.pnlUsd * factor;
+        capital += pnlUsd;
+        return { ...o, pnlUsd, comisionesUsd: o.comisionesUsd * factor, capitalDespues: capital };
+    });
+    const periodo: ResultadoSimulacion = { ...resultado, operaciones: recalculadas, capitalFinal: capital };
+    const m = calcularMetricas(periodo, capitalInicial);
+
+    if (detalle) {
+        console.log('\n📜 Operaciones:');
+        for (const o of recalculadas) {
+            console.log(`  ${fecha(o.tiempoEntrada)} → ${fecha(o.tiempoSalida)} | ${o.direccion.padEnd(5)} | ${o.motivo.padEnd(14)} | ${o.pnlR >= 0 ? '+' : ''}${o.pnlR.toFixed(2)}R | ${usd(o.capitalDespues)}`);
+        }
+    }
+
+    const retornoBH = ((precioFinal - precioInicial) / precioInicial) * 100;
+    console.log('\n📊 RESULTADOS (después de comisiones y slippage)');
+    console.log(`   Capital inicial:      ${usd(capitalInicial)}`);
+    console.log(`   Capital final:        ${usd(capital)}`);
+    console.log(`   Retorno:              ${m.retornoPct >= 0 ? '🟩' : '🟥'} ${m.retornoPct.toFixed(2)}%   (comprar y mantener BTC: ${retornoBH.toFixed(2)}%)`);
+    console.log(`   Operaciones:          ${m.operaciones}${estrategia === 'barrido' ? `  (bloqueadas por ADX: ${resultado.senalesFiltradas})` : ''}`);
+    console.log(`   Win rate:             ${m.winRate.toFixed(1)}%`);
+    console.log(`   Expectativa:          ${m.rPromedio >= 0 ? '+' : ''}${m.rPromedio.toFixed(3)}R por operación`);
+    console.log(`   Profit factor:        ${Number.isFinite(m.profitFactor) ? m.profitFactor.toFixed(2) : '∞'}`);
+    console.log(`   Máximo drawdown:      ${m.maxDrawdownPct.toFixed(2)}%`);
+    console.log(`   Comisiones pagadas:   ${usd(m.comisionesUsd)}`);
+    console.log(`   Salidas por motivo:   ${Object.entries(m.porMotivo).map(([k, v]) => `${k}=${v}`).join(', ') || '—'}`);
+    console.log(`   Supuestos: riesgo ${PARAMETROS_POR_DEFECTO.riesgoPct}%/operación, comisión ${(PARAMETROS_POR_DEFECTO.comision * 100).toFixed(3)}% por lado, slippage ${PARAMETROS_POR_DEFECTO.slippageBps} bps, apalancamiento máx. ${PARAMETROS_POR_DEFECTO.apalancamientoMax}x`);
+
+    if (m.operaciones < MUESTRA_MINIMA) {
+        console.log(`\n⚠️  Solo ${m.operaciones} operaciones: la muestra es demasiado pequeña para sacar conclusiones. Prueba con más --dias.`);
+    }
+    console.log('===================================================\n');
 }
 
-ejecutarBacktestOptimizado();
+main().catch(error => {
+    console.error('❌ Error en el backtest:', error);
+    process.exitCode = 1;
+});
