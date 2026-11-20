@@ -7,7 +7,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev:engine": "npm run dev --workspace=apps/engine",
+    "dev:engine": "tsx watch apps/engine/index.ts",
+    "start:engine": "tsx apps/engine/index.ts",
+    "backtest": "tsx apps/engine/backtester.ts",
+    "test": "tsx --test apps/engine/test/*.test.ts",
     "dev:web": "npm run dev --workspace=apps/web",
     "db:generate": "npx prisma generate",
     "db:push": "npx prisma db push"
