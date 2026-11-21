@@ -3,58 +3,79 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
+// Configuración editable de cada estrategia. El motor la crea al arrancar y la lee en cada ciclo:
+// poner isActive = false detiene las señales de entrada sin redeploy.
 model StrategyConfig {
-  id               String   @id @default(uuid())
-  strategyName     String   @unique 
-  isActive         Boolean  @default(true)
-  maxRiskPerTrade  Float    @default(0.75) 
-  updatedAt        DateTime @updatedAt
+  id              String   @id @default(uuid())
+  strategyName    String   @unique
+  isActive        Boolean  @default(true)
+  maxRiskPerTrade Float    @default(0.75) // % del balance por operación
+  updatedAt       DateTime @updatedAt
 }
 
+// Latido del motor: se escribe en cada ciclo (cada 15 min). El dashboard lo usa para saber si el motor está vivo.
 model MarketRegimeRecord {
-  id          String   @id @default(uuid())
-  timestamp   DateTime @default(now())
-  regime      String   
-  adx1h       Float?
-  emaSlope4h  Float?
+  id         String   @id @default(uuid())
+  timestamp  DateTime @default(now())
+  regime     String
+  adx1h      Float?
+  emaSlope4h Float? // pendiente de la EMA50 de 4h en % por vela de 4h
+  price      Float? // cierre de la última vela de 1h cerrada
+
+  @@index([timestamp])
 }
 
 model Signal {
-  id              String   @id @default(uuid())
-  symbol          String   @default("BTCUSDT")
-  strategy        String
-  direction       String   
-  generatedAt     DateTime @default(now())
-  entryPrice      Float
-  stopLoss        Float
-  takeProfit1     Float
-  takeProfit2     Float
-  riskRewardNet   Float    
-  probability     Float?   
-  status          String   @default("ACTIVE") 
-  closedAt        DateTime?
-  pnlNet          Float?   
+  id            String    @id @default(uuid())
+  symbol        String    @default("BTCUSDT")
+  strategy      String
+  direction     String // LONG | SHORT
+  generatedAt   DateTime  @default(now())
+  entryPrice    Float
+  stopLoss      Float
+  takeProfit1   Float // la estrategia usa un único objetivo: takeProfit1 = takeProfit2
+  takeProfit2   Float
+  riskRewardNet Float // R:R neto de comisiones y slippage estimados
+  probability   Float?
+  status        String    @default("ACTIVE") // ACTIVE | CLOSED_TP | CLOSED_SL | CLOSED_EXIT
+  closedAt      DateTime?
+  exitPrice     Float?
+  exitReason    String? // TP | SL | EXIT_SIGNAL
+  pnlNet        Float? // resultado neto en múltiplos de R (comisiones y slippage incluidos)
+  atr           Float?
+
+  @@index([status])
+  @@index([generatedAt])
 }
 
 model RejectedSignal {
-  id              String   @id @default(uuid())
-  symbol          String   @default("BTCUSDT")
-  strategy        String
-  direction       String
-  rejectedAt      DateTime @default(now())
-  reason          String   
-  riskRewardNet   Float
+  id            String   @id @default(uuid())
+  symbol        String   @default("BTCUSDT")
+  strategy      String
+  direction     String
+  rejectedAt    DateTime @default(now())
+  reason        String
+  riskRewardNet Float
 }
 
 model SystemHealth {
-  id              String   @id @default(uuid())
-  timestamp       DateTime @default(now())
-  component       String   
-  status          String   
-  message         String?
+  id        String   @id @default(uuid())
+  timestamp DateTime @default(now())
+  component String // ENGINE | BINANCE | TELEGRAM | DB
+  status    String // OK | ERROR | STARTED
+  message   String?
+
+  @@index([timestamp])
+}
+
+// Estado persistente del motor (anti-spam, última vela procesada). Sobrevive a reinicios de Render.
+model EngineState {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
 }
