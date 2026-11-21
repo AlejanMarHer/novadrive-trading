@@ -8,23 +8,22 @@
   ],
   "scripts": {
     "dev:engine": "npm run dev --workspace=apps/engine",
+    "start:engine": "npm run start --workspace=apps/engine",
     "dev:web": "npm run dev --workspace=apps/web",
-    "db:generate": "npx prisma generate",
-    "db:push": "npx prisma db push"
+    "backtest": "npm run backtest --workspace=apps/engine --",
+    "test": "npm run test --workspace=apps/engine && tsx --test apps/web/lib/*.test.ts",
+    "typecheck": "npm run typecheck --workspace=apps/engine",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
-    "@types/ws": "^8.18.2",
-    "prisma": "^5.10.0",
+    "prisma": "^5.22.0",
     "tsx": "^4.23.15",
     "typescript": "^5.3.3"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "ccxt": "^4.5.89",
-    "date-fns": "^4.4.0",
-    "lightweight-charts": "^5.2.1",
-    "technicalindicators": "^3.1.0",
-    "ws": "^8.22.0"
+    "technicalindicators": "^3.1.0"
   }
 }
