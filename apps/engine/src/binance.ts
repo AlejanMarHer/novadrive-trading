@@ -33,16 +33,18 @@ export async function fetchKlines(
     const params = new URLSearchParams({ symbol, interval, limit: String(opts.limit ?? 500) });
     if (opts.startTime !== undefined) params.set('startTime', String(opts.startTime));
     if (opts.endTime !== undefined) params.set('endTime', String(opts.endTime));
-    let lastError: unknown;
+    const errores: string[] = [];
     for (const base of BINANCE_API_URLS) {
         try {
             return parseKlines(await fetchJson(`${base}/api/v3/klines?${params}`));
         } catch (err) {
-            lastError = err;
-            console.warn(`⚠️ Binance falló en ${base}: ${err instanceof Error ? err.message : err}`);
+            const msg = err instanceof Error ? err.message : String(err);
+            errores.push(msg);
+            console.warn(`⚠️ Binance falló en ${base}: ${msg}`);
         }
     }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    // Se informan los errores de TODOS los hosts (p. ej. 418 = IP baneada por Binance, 451 = región bloqueada)
+    throw new Error(`Binance no respondió en ningún host → ${errores.join(' | ')}`);
 }
 
 /** Descarga las últimas `count` velas CERRADAS. */

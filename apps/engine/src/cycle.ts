@@ -23,7 +23,7 @@ import { resolveSignal, signalPnlR, STATUS_BY_REASON } from './lifecycle';
 import { backtestLine, dailyReportMessage, downtimeMessage, entryMessage, exitMessage } from './messages';
 import { dailyReportDue, wasDown } from './monitor';
 import { decide, evaluate, type SignalState } from './strategy';
-import { enviarTelegram } from './telegram';
+import { enviarTelegramRegistrando } from './telegram';
 import type { Direction } from './types';
 
 const DAILY_KEY = `dailyReport:${STRATEGY_NAME}`;
@@ -62,7 +62,7 @@ export async function runCycle(now = new Date()): Promise<void> {
     if (wasDown(previousBeat, now, DOWNTIME_ALERT_MINUTES)) {
         console.warn(`⚠️ Hueco desde el último latido (${previousBeat!.toISOString()}): avisando por Telegram.`);
         await logHealth('ENGINE', 'ERROR', `Sin ciclos desde ${previousBeat!.toISOString()}`);
-        await enviarTelegram(downtimeMessage(previousBeat!, now));
+        await enviarTelegramRegistrando(downtimeMessage(previousBeat!, now), 'Aviso de motor caído');
     }
 
     const config = await loadStrategyConfig();
@@ -99,8 +99,7 @@ export async function runCycle(now = new Date()): Promise<void> {
             },
         });
         console.log(`🏁 Señal ${s.direction} cerrada por ${exit.reason} (${pnlR.toFixed(2)} R)`);
-        const sent = await enviarTelegram(exitMessage(sig.direction, sig.entryPrice, exit, pnlR));
-        if (!sent) await logHealth('TELEGRAM', 'ERROR', `No se entregó el aviso de cierre de la señal ${s.id}`);
+        await enviarTelegramRegistrando(exitMessage(sig.direction, sig.entryPrice, exit, pnlR), `Aviso de cierre de la señal ${s.id}`);
     }
 
     // --- 3. ¿Señal nueva? ---
@@ -128,8 +127,7 @@ export async function runCycle(now = new Date()): Promise<void> {
             });
             console.log(`🚀 SEÑAL NUEVA ${d.direction} guardada (${signal.id})`);
             note = `Señal ${d.direction} emitida a ${d.plan.entry.toFixed(2)}.`;
-            const sent = await enviarTelegram(entryMessage(ev, d.plan, backtestLine(bt)));
-            if (!sent) await logHealth('TELEGRAM', 'ERROR', `No se entregó la señal ${signal.id}`);
+            await enviarTelegramRegistrando(entryMessage(ev, d.plan, backtestLine(bt)), `Señal ${signal.id}`);
         } else if (d.action === 'REJECT') {
             console.log(`🚫 Señal ${d.direction} rechazada: ${d.reason}`);
             note = `Señal ${d.direction} rechazada: ${d.reason}.`;
@@ -161,7 +159,7 @@ export async function runCycle(now = new Date()): Promise<void> {
                 select: { pnlNet: true },
             }),
         ]);
-        const sent = await enviarTelegram(dailyReportMessage({
+        const sent = await enviarTelegramRegistrando(dailyReportMessage({
             ev,
             note: stillActive ? explainNoSignal(ev, state, activeDirection, p) : note,
             active: stillActive,
@@ -169,8 +167,7 @@ export async function runCycle(now = new Date()): Promise<void> {
             closed7d: { count: closed.length, sumR: closed.reduce((a, s) => a + (s.pnlNet ?? 0), 0) },
             backtest: bt,
             now,
-        }));
+        }), 'Informe diario');
         if (sent) await setState(DAILY_KEY, { date: due });
-        else await logHealth('TELEGRAM', 'ERROR', 'No se entregó el informe diario');
     }
 }

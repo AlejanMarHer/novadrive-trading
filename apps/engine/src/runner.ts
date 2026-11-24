@@ -3,7 +3,7 @@ import { FAILURE_ALERT_STREAK } from './config';
 import { runCycle } from './cycle';
 import { acquireCycleLock, getState, logHealth, releaseCycleLock, setState } from './db';
 import { failureMessage, recoveryMessage } from './messages';
-import { enviarTelegram } from './telegram';
+import { enviarTelegramRegistrando } from './telegram';
 
 export type CycleOutcome = 'ok' | 'locked' | 'error';
 
@@ -46,7 +46,7 @@ export async function runGuardedCycle(source: string): Promise<{ outcome: CycleO
         await runCycle();
         const streak = await readStreak();
         if (streak > 0) {
-            if (streak >= FAILURE_ALERT_STREAK) await enviarTelegram(recoveryMessage(streak));
+            if (streak >= FAILURE_ALERT_STREAK) await enviarTelegramRegistrando(recoveryMessage(streak), 'Aviso de recuperación');
             await writeStreak(0);
         }
         return { outcome: 'ok' };
@@ -56,7 +56,7 @@ export async function runGuardedCycle(source: string): Promise<{ outcome: CycleO
         await logHealth('ENGINE', 'ERROR', msg);
         const streak = (await readStreak()) + 1;
         await writeStreak(streak);
-        if (streak === FAILURE_ALERT_STREAK) await enviarTelegram(failureMessage(streak, msg));
+        if (streak === FAILURE_ALERT_STREAK) await enviarTelegramRegistrando(failureMessage(streak, msg), 'Aviso de fallos');
         return { outcome: 'error', error: msg };
     } finally {
         if (locked) await releaseCycleLock(owner).catch(() => undefined);
