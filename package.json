@@ -9,6 +9,7 @@
   "scripts": {
     "dev:engine": "npm run dev --workspace=apps/engine",
     "start:engine": "npm run start --workspace=apps/engine",
+    "cycle": "npm run cycle --workspace=apps/engine",
     "dev:web": "npm run dev --workspace=apps/web",
     "backtest": "npm run backtest --workspace=apps/engine --",
     "test": "npm run test --workspace=apps/engine && tsx --test apps/web/lib/*.test.ts",

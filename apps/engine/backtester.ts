@@ -5,9 +5,10 @@
  *   npm run backtest --workspace=apps/engine -- --days=1095        # más historial
  *   npm run backtest --workspace=apps/engine -- --strategy=sweep   # estrategia antigua de barrido (15m)
  *   npm run backtest --workspace=apps/engine -- --json=resultado.json --no-cache
+ *   npm run backtest --workspace=apps/engine -- --save     # guarda el resumen en BacktestRun (lo muestran dashboard y Telegram)
  */
 import fs from 'fs';
-import { DEFAULT_COSTS, DEFAULT_STRATEGY, SYMBOL } from './src/config';
+import { DEFAULT_COSTS, DEFAULT_STRATEGY, STRATEGY_NAME, SYMBOL } from './src/config';
 import { fetchHistory } from './src/backtest/data';
 import { computeStats, formatReport } from './src/backtest/stats';
 import { runSweepBacktest } from './src/backtest/sweep';
@@ -61,6 +62,32 @@ async function main() {
     if (jsonPath && jsonPath !== 'true') {
         fs.writeFileSync(jsonPath, JSON.stringify({ stats, result }, null, 2));
         console.log(`💾 Resultado guardado en ${jsonPath}`);
+    }
+
+    if (arg('save') !== undefined) {
+        if (strategy !== 'trend') throw new Error('--save solo aplica a la estrategia en vivo (trend)');
+        const { prisma } = await import('./src/db');
+        const run = await prisma.backtestRun.create({
+            data: {
+                strategy: STRATEGY_NAME,
+                symbol: SYMBOL,
+                periodStart: new Date(result.from),
+                periodEnd: new Date(result.to),
+                trades: stats.trades,
+                winRate: stats.winRate,
+                avgR: stats.avgR,
+                ciLowR: stats.ciLowR,
+                ciHighR: stats.ciHighR,
+                expectancyPct: stats.expectancyPct,
+                totalReturnPct: stats.totalReturnPct,
+                maxDrawdownPct: stats.maxDrawdownPct,
+                profitFactor: Number.isFinite(stats.profitFactor) ? stats.profitFactor : null,
+                totalFeesPct: stats.totalFeesPct,
+                params: { strategy: DEFAULT_STRATEGY, costs: DEFAULT_COSTS, days } as object,
+            },
+        });
+        console.log(`💾 Backtest guardado en BacktestRun (${run.id})`);
+        await prisma.$disconnect();
     }
 }
 

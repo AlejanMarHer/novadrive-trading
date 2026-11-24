@@ -1,20 +1,42 @@
 import { fetchClosedKlines } from './binance';
-import { DEFAULT_COSTS, DEFAULT_STRATEGY, STRATEGY_NAME, SYMBOL } from './config';
-import { loadSignalState, loadStrategyConfig, logHealth, prisma, saveSignalState } from './db';
+import {
+    DAILY_REPORT_HOUR_UTC,
+    DEFAULT_COSTS,
+    DEFAULT_STRATEGY,
+    DOWNTIME_ALERT_MINUTES,
+    STRATEGY_NAME,
+    SYMBOL,
+} from './config';
+import {
+    getState,
+    lastHeartbeatAt,
+    latestBacktest,
+    loadSignalState,
+    loadStrategyConfig,
+    logHealth,
+    prisma,
+    saveSignalState,
+    setState,
+} from './db';
+import { explainNoSignal } from './explain';
 import { resolveSignal, signalPnlR, STATUS_BY_REASON } from './lifecycle';
-import { entryMessage, exitMessage } from './messages';
-import { decide, evaluate } from './strategy';
+import { backtestLine, dailyReportMessage, downtimeMessage, entryMessage, exitMessage } from './messages';
+import { dailyReportDue, wasDown } from './monitor';
+import { decide, evaluate, type SignalState } from './strategy';
 import { enviarTelegram } from './telegram';
 import type { Direction } from './types';
+
+const DAILY_KEY = `dailyReport:${STRATEGY_NAME}`;
 
 /**
  * Un ciclo del motor:
  *  1. Descarga solo velas CERRADAS de 1h y 4h.
  *  2. Cierra las señales activas que tocaron SL/TP o cuya tendencia terminó (y avisa por Telegram).
  *  3. Decide si hay señal nueva (anti-spam con estado persistido en BD) y la guarda en `Signal`.
- *  4. Escribe el latido en `MarketRegimeRecord`.
+ *  4. Escribe el latido en `MarketRegimeRecord` con la explicación de por qué hay o no señal.
+ *  5. Avisa si el motor estuvo caído y envía el informe diario.
  */
-export async function runCycle(): Promise<void> {
+export async function runCycle(now = new Date()): Promise<void> {
     const p = DEFAULT_STRATEGY;
 
     let c1h, c4h;
@@ -35,12 +57,22 @@ export async function runCycle(): Promise<void> {
         `vela 1h cerrada ${new Date(ev.candleCloseTime).toISOString()}`,
     );
 
+    // --- ¿Estuvo caído el motor? (antes de escribir el latido nuevo) ---
+    const previousBeat = await lastHeartbeatAt();
+    if (wasDown(previousBeat, now, DOWNTIME_ALERT_MINUTES)) {
+        console.warn(`⚠️ Hueco desde el último latido (${previousBeat!.toISOString()}): avisando por Telegram.`);
+        await logHealth('ENGINE', 'ERROR', `Sin ciclos desde ${previousBeat!.toISOString()}`);
+        await enviarTelegram(downtimeMessage(previousBeat!, now));
+    }
+
     const config = await loadStrategyConfig();
     const costs = { ...DEFAULT_COSTS, riskPct: config.maxRiskPerTrade };
+    const bt = await latestBacktest(STRATEGY_NAME);
 
     // --- 2. Señales activas: ¿terminaron? ---
     const active = await prisma.signal.findMany({ where: { status: 'ACTIVE', strategy: STRATEGY_NAME, symbol: SYMBOL } });
     let activeDirection: Direction | null = null;
+    let stillActive: (typeof active)[number] | null = null;
     for (const s of active) {
         const sig = {
             direction: s.direction as Direction,
@@ -52,6 +84,7 @@ export async function runCycle(): Promise<void> {
         const exit = resolveSignal(sig, c1h, ev);
         if (!exit) {
             activeDirection = sig.direction;
+            stillActive = s;
             continue;
         }
         const pnlR = signalPnlR(sig, exit, costs);
@@ -71,9 +104,11 @@ export async function runCycle(): Promise<void> {
     }
 
     // --- 3. ¿Señal nueva? ---
-    const state = await loadSignalState();
+    let state: SignalState = await loadSignalState();
+    let note: string;
     if (state.lastCandleCloseTime === ev.candleCloseTime) {
         console.log('⏳ Esta vela de 1h ya fue procesada; no hay decisión nueva.');
+        note = explainNoSignal(ev, state, activeDirection, p);
     } else {
         const d = decide(ev, state, { activeDirection, strategyActive: config.isActive }, p, costs);
         if (d.action === 'ENTER') {
@@ -88,24 +123,54 @@ export async function runCycle(): Promise<void> {
                     takeProfit2: d.plan.takeProfit,
                     riskRewardNet: d.plan.rrNet,
                     atr: ev.atr,
+                    generatedAt: now,
                 },
             });
             console.log(`🚀 SEÑAL NUEVA ${d.direction} guardada (${signal.id})`);
-            const sent = await enviarTelegram(entryMessage(ev, d.plan));
+            note = `Señal ${d.direction} emitida a ${d.plan.entry.toFixed(2)}.`;
+            const sent = await enviarTelegram(entryMessage(ev, d.plan, backtestLine(bt)));
             if (!sent) await logHealth('TELEGRAM', 'ERROR', `No se entregó la señal ${signal.id}`);
         } else if (d.action === 'REJECT') {
             console.log(`🚫 Señal ${d.direction} rechazada: ${d.reason}`);
+            note = `Señal ${d.direction} rechazada: ${d.reason}.`;
             await prisma.rejectedSignal.create({
-                data: { symbol: SYMBOL, strategy: STRATEGY_NAME, direction: d.direction, reason: d.reason, riskRewardNet: d.plan.rrNet },
+                data: { symbol: SYMBOL, strategy: STRATEGY_NAME, direction: d.direction, reason: d.reason, riskRewardNet: d.plan.rrNet, rejectedAt: now },
             });
         } else {
-            console.log('— Sin señal nueva.');
+            note = explainNoSignal(ev, d.state, activeDirection, p);
+            console.log(`— Sin señal nueva: ${note}`);
         }
-        await saveSignalState(d.state);
+        state = d.state;
+        await saveSignalState(state);
     }
 
     // --- 4. Latido ---
     await prisma.marketRegimeRecord.create({
-        data: { regime: ev.regime, adx1h: ev.adx, emaSlope4h: ev.emaSlope4h, price: ev.price },
+        data: { timestamp: now, regime: ev.regime, adx1h: ev.adx, emaSlope4h: ev.emaSlope4h, price: ev.price, note },
     });
+
+    // --- 5. Informe diario ---
+    const last = await getState<{ date: string }>(DAILY_KEY);
+    const due = dailyReportDue(now, last?.date ?? null, DAILY_REPORT_HOUR_UTC);
+    if (due) {
+        const since = new Date(now.getTime() - 7 * 86_400_000);
+        const [signals7d, closed] = await Promise.all([
+            prisma.signal.count({ where: { strategy: STRATEGY_NAME, generatedAt: { gte: since } } }),
+            prisma.signal.findMany({
+                where: { strategy: STRATEGY_NAME, closedAt: { gte: since }, pnlNet: { not: null } },
+                select: { pnlNet: true },
+            }),
+        ]);
+        const sent = await enviarTelegram(dailyReportMessage({
+            ev,
+            note: stillActive ? explainNoSignal(ev, state, activeDirection, p) : note,
+            active: stillActive,
+            signals7d,
+            closed7d: { count: closed.length, sumR: closed.reduce((a, s) => a + (s.pnlNet ?? 0), 0) },
+            backtest: bt,
+            now,
+        }));
+        if (sent) await setState(DAILY_KEY, { date: due });
+        else await logHealth('TELEGRAM', 'ERROR', 'No se entregó el informe diario');
+    }
 }

@@ -1,4 +1,4 @@
-import { BINANCE_API_URL } from './config';
+import { BINANCE_API_URLS } from './config';
 import { fetchJson } from './http';
 import type { Candle } from './types';
 
@@ -33,8 +33,16 @@ export async function fetchKlines(
     const params = new URLSearchParams({ symbol, interval, limit: String(opts.limit ?? 500) });
     if (opts.startTime !== undefined) params.set('startTime', String(opts.startTime));
     if (opts.endTime !== undefined) params.set('endTime', String(opts.endTime));
-    const data = await fetchJson(`${BINANCE_API_URL}/api/v3/klines?${params}`);
-    return parseKlines(data);
+    let lastError: unknown;
+    for (const base of BINANCE_API_URLS) {
+        try {
+            return parseKlines(await fetchJson(`${base}/api/v3/klines?${params}`));
+        } catch (err) {
+            lastError = err;
+            console.warn(`⚠️ Binance falló en ${base}: ${err instanceof Error ? err.message : err}`);
+        }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 /** Descarga las últimas `count` velas CERRADAS. */

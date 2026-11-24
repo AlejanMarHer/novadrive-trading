@@ -44,3 +44,46 @@ export async function logHealth(component: string, status: 'OK' | 'ERROR' | 'STA
         console.error(`⚠️ No se pudo registrar SystemHealth (${component}/${status}): ${msg}`);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Estado genérico (clave → JSON) en EngineState
+// ---------------------------------------------------------------------------
+
+export async function getState<T>(key: string): Promise<T | null> {
+    const row = await prisma.engineState.findUnique({ where: { key } });
+    return row ? (row.value as unknown as T) : null;
+}
+
+export async function setState(key: string, value: unknown): Promise<void> {
+    const v = value as Prisma.InputJsonValue;
+    await prisma.engineState.upsert({ where: { key }, create: { key, value: v }, update: { value: v } });
+}
+
+/**
+ * Candado entre procesos (p. ej. Render y GitHub Actions a la vez) para que dos ciclos no
+ * corran simultáneamente y dupliquen una señal. Es una fila con caducidad, así que si un proceso
+ * muere con el candado tomado, se libera solo. Funciona con el pooler de Supabase (pgbouncer).
+ */
+export async function acquireCycleLock(owner: string, ttlMs = 5 * 60_000): Promise<boolean> {
+    const now = Date.now();
+    const value = JSON.stringify({ owner, until: now + ttlMs });
+    const rows = await prisma.$executeRaw`
+        INSERT INTO "EngineState" ("key", "value", "updatedAt")
+        VALUES ('lock:cycle', ${value}::jsonb, now())
+        ON CONFLICT ("key") DO UPDATE SET "value" = EXCLUDED."value", "updatedAt" = now()
+        WHERE ("EngineState"."value"->>'until')::bigint < ${now}::bigint`;
+    return rows > 0;
+}
+
+export async function releaseCycleLock(owner: string): Promise<void> {
+    await prisma.$executeRaw`DELETE FROM "EngineState" WHERE "key" = 'lock:cycle' AND "value"->>'owner' = ${owner}`;
+}
+
+export async function lastHeartbeatAt(): Promise<Date | null> {
+    const r = await prisma.marketRegimeRecord.findFirst({ orderBy: { timestamp: 'desc' }, select: { timestamp: true } });
+    return r?.timestamp ?? null;
+}
+
+export async function latestBacktest(strategy: string) {
+    return prisma.backtestRun.findFirst({ where: { strategy }, orderBy: { createdAt: 'desc' } });
+}

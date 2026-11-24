@@ -26,6 +26,7 @@ model MarketRegimeRecord {
   adx1h      Float?
   emaSlope4h Float? // pendiente de la EMA50 de 4h en % por vela de 4h
   price      Float? // cierre de la última vela de 1h cerrada
+  note       String? // explicación legible de por qué hay (o no) señal
 
   @@index([timestamp])
 }
@@ -78,4 +79,27 @@ model EngineState {
   key       String   @id
   value     Json
   updatedAt DateTime @updatedAt
+}
+
+// Resultado de cada backtest guardado con `npm run backtest -- --save`. El dashboard muestra el último.
+model BacktestRun {
+  id             String   @id @default(uuid())
+  createdAt      DateTime @default(now())
+  strategy       String
+  symbol         String   @default("BTCUSDT")
+  periodStart    DateTime
+  periodEnd      DateTime
+  trades         Int
+  winRate        Float
+  avgR           Float // expectativa neta por operación, en R
+  ciLowR         Float // intervalo de confianza 95% de avgR
+  ciHighR        Float
+  expectancyPct  Float // expectativa por operación en % del balance
+  totalReturnPct Float
+  maxDrawdownPct Float
+  profitFactor   Float?
+  totalFeesPct   Float
+  params         Json // parámetros de estrategia y costes usados
+
+  @@index([strategy, createdAt])
 }

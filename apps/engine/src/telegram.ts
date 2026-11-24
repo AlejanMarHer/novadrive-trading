@@ -14,7 +14,7 @@ export async function enviarTelegram(mensaje: string): Promise<boolean> {
 
     try {
         const res = await fetchJson<{ ok: boolean; description?: string }>(
-            `https://api.telegram.org/bot${token}/sendMessage`,
+            `${process.env.TELEGRAM_API_URL ?? 'https://api.telegram.org'}/bot${token}/sendMessage`,
             {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

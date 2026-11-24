@@ -1,7 +1,7 @@
 import http from 'http';
 import { CYCLE_MINUTES, STRATEGY_NAME, SYMBOL } from './src/config';
-import { runCycle } from './src/cycle';
 import { logHealth, prisma } from './src/db';
+import { runGuardedCycle } from './src/runner';
 
 console.log('===================================================');
 console.log(`🤖 MOTOR CUANTITATIVO ${STRATEGY_NAME} | ${SYMBOL}`);
@@ -39,14 +39,15 @@ async function cicloMaestro() {
     running = true;
     console.log(`\n⏱️ [${new Date().toISOString()}] Iniciando ciclo...`);
     try {
-        await runCycle();
-        lastSuccessAt = Date.now();
-        lastError = null;
-        console.log('✅ Ciclo finalizado.');
-    } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-        console.error('❌ Error en el ciclo maestro:', lastError);
-        await logHealth('ENGINE', 'ERROR', lastError);
+        const r = await runGuardedCycle('render');
+        if (r.outcome === 'error') {
+            lastError = r.error ?? 'error desconocido';
+        } else {
+            // 'locked' = otro proceso (p. ej. GitHub Actions) ya ejecutó el ciclo: el sistema está sano.
+            lastSuccessAt = Date.now();
+            lastError = null;
+            console.log(r.outcome === 'ok' ? '✅ Ciclo finalizado.' : '✅ Ciclo cubierto por otro proceso.');
+        }
     } finally {
         running = false;
     }

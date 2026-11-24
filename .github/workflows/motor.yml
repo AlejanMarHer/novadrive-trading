@@ -1,0 +1,57 @@
+# Ejecuta un ciclo del motor de señales cada 15 minutos en GitHub Actions.
+# Gratis en repositorios públicos y, a diferencia del plan gratuito de Render, no se duerme.
+# Puede convivir con el servicio de Render: un candado en la base de datos evita ciclos duplicados.
+#
+# Configuración (Settings → Secrets and variables → Actions → New repository secret):
+#   DATABASE_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   (DIRECT_URL es opcional)
+# Mientras DATABASE_URL no exista, el workflow termina sin hacer nada.
+#
+# Nota: GitHub puede retrasar las ejecuciones programadas varios minutos en horas de carga, y
+# desactiva los workflows programados de repos públicos tras 60 días sin actividad en el repo.
+name: Motor de señales
+
+on:
+  schedule:
+    - cron: '3,18,33,48 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: motor-de-senales
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ciclo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL || secrets.DATABASE_URL }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Comprobar configuración
+        id: cfg
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::notice::Falta el secreto DATABASE_URL: el motor no se ejecuta. Ver README (Despliegue)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.skip != 'true'
+      - uses: actions/setup-node@v4
+        if: steps.cfg.outputs.skip != 'true'
+        with:
+          node-version: 22
+          cache: npm
+      - name: Instalar dependencias del motor
+        if: steps.cfg.outputs.skip != 'true'
+        run: npm ci -w apps/engine --include-workspace-root --no-audit --no-fund
+      - name: Generar cliente de Prisma
+        if: steps.cfg.outputs.skip != 'true'
+        run: npx prisma generate
+      - name: Ejecutar un ciclo
+        if: steps.cfg.outputs.skip != 'true'
+        run: npm run cycle

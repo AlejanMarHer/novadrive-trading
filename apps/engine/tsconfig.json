@@ -4,5 +4,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["index.ts", "backtester.ts", "src/**/*.ts", "test/**/*.ts"]
+  "include": ["index.ts", "once.ts", "backtester.ts", "src/**/*.ts", "test/**/*.ts"]
 }

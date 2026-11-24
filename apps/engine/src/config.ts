@@ -68,8 +68,30 @@ export const DEFAULT_COSTS: CostParams = {
 
 export const SYMBOL = process.env.SYMBOL ?? 'BTCUSDT';
 
-/** Base de la API pública de Binance. En regiones bloqueadas se puede usar https://data-api.binance.vision */
-export const BINANCE_API_URL = process.env.BINANCE_API_URL ?? 'https://api.binance.com';
+/**
+ * Bases de la API pública de Binance, en orden de preferencia.
+ * data-api.binance.vision es el endpoint oficial SOLO de datos de mercado: no tiene bloqueo geográfico
+ * (api.binance.com responde 451 desde EE. UU., donde están Render-Oregon/Ohio y GitHub Actions).
+ * Se puede sobrescribir con BINANCE_API_URL (una o varias URLs separadas por comas).
+ */
+export const BINANCE_API_URLS: string[] = (process.env.BINANCE_API_URL ?? 'https://data-api.binance.vision,https://api.binance.com')
+    .split(',')
+    .map(u => u.trim().replace(/\/$/, ''))
+    .filter(Boolean);
 
 export const HTTP_TIMEOUT_MS = 10_000;
 export const CYCLE_MINUTES = 15;
+
+/** Hora UTC del informe diario por Telegram (DAILY_REPORT_HOUR_UTC=off para desactivarlo). */
+export const DAILY_REPORT_HOUR_UTC: number | null = (() => {
+    const v = process.env.DAILY_REPORT_HOUR_UTC ?? '12';
+    if (v === 'off') return null;
+    const n = Number(v);
+    return Number.isInteger(n) && n >= 0 && n <= 23 ? n : 12;
+})();
+
+/** Si entre dos ciclos pasan más de estos minutos, se avisa por Telegram de que el motor estuvo caído. */
+export const DOWNTIME_ALERT_MINUTES = 90;
+
+/** Ciclos fallidos seguidos a partir de los cuales se avisa por Telegram. */
+export const FAILURE_ALERT_STREAK = 3;
