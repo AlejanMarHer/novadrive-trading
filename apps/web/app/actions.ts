@@ -8,6 +8,7 @@ export interface DashboardData {
     adx1h: number | null;
     emaSlope4h: number | null;
     price: number | null;
+    note: string | null;
     timestamp: string;
   } | null;
   senalActiva: {
@@ -34,6 +35,19 @@ export interface DashboardData {
     sumaR: number;
   };
   ultimoError: { component: string; message: string | null; timestamp: string } | null;
+  backtest: {
+    createdAt: string;
+    periodStart: string;
+    periodEnd: string;
+    trades: number;
+    winRate: number;
+    avgR: number;
+    ciLowR: number;
+    ciHighR: number;
+    totalReturnPct: number;
+    maxDrawdownPct: number;
+    profitFactor: number | null;
+  } | null;
   error: string | null;
 }
 
@@ -43,12 +57,13 @@ const EMPTY: DashboardData = {
   ultimasSenales: [],
   rendimiento: { cerradas: 0, ganadoras: 0, winRate: null, expectativaR: null, sumaR: 0 },
   ultimoError: null,
+  backtest: null,
   error: null,
 };
 
 export async function obtenerEstadoDashboard(): Promise<DashboardData> {
   try {
-    const [regimen, activa, ultimas, cerradas, ultimoError] = await Promise.all([
+    const [regimen, activa, ultimas, cerradas, ultimoError, backtest] = await Promise.all([
       prisma.marketRegimeRecord.findFirst({ orderBy: { timestamp: 'desc' } }),
       prisma.signal.findFirst({ where: { status: 'ACTIVE' }, orderBy: { generatedAt: 'desc' } }),
       prisma.signal.findMany({ orderBy: { generatedAt: 'desc' }, take: 5 }),
@@ -57,6 +72,7 @@ export async function obtenerEstadoDashboard(): Promise<DashboardData> {
         where: { status: 'ERROR', timestamp: { gte: new Date(Date.now() - 24 * 3_600_000) } },
         orderBy: { timestamp: 'desc' },
       }),
+      prisma.backtestRun.findFirst({ orderBy: { createdAt: 'desc' } }),
     ]);
 
     const rs = cerradas.map(s => s.pnlNet as number);
@@ -69,6 +85,7 @@ export async function obtenerEstadoDashboard(): Promise<DashboardData> {
         adx1h: regimen.adx1h,
         emaSlope4h: regimen.emaSlope4h,
         price: regimen.price,
+        note: regimen.note,
         timestamp: regimen.timestamp.toISOString(),
       },
       senalActiva: activa && {
@@ -98,6 +115,19 @@ export async function obtenerEstadoDashboard(): Promise<DashboardData> {
         component: ultimoError.component,
         message: ultimoError.message,
         timestamp: ultimoError.timestamp.toISOString(),
+      },
+      backtest: backtest && {
+        createdAt: backtest.createdAt.toISOString(),
+        periodStart: backtest.periodStart.toISOString(),
+        periodEnd: backtest.periodEnd.toISOString(),
+        trades: backtest.trades,
+        winRate: backtest.winRate,
+        avgR: backtest.avgR,
+        ciLowR: backtest.ciLowR,
+        ciHighR: backtest.ciHighR,
+        totalReturnPct: backtest.totalReturnPct,
+        maxDrawdownPct: backtest.maxDrawdownPct,
+        profitFactor: backtest.profitFactor,
       },
       error: null,
     };

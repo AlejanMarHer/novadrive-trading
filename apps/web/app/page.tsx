@@ -4,8 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Chart from './Chart';
 import { obtenerEstadoDashboard, type DashboardData } from './actions';
 import { formatAge, isStale, minutesSince, STALE_AFTER_MINUTES } from '@/lib/freshness';
-
-type SocketStatus = 'conectando' | 'conectado' | 'desconectado';
+import { openBinanceStream, type StreamStatus as SocketStatus } from '@/lib/binanceStream';
 
 const SOCKET_LABEL: Record<SocketStatus, { text: string; dot: string; color: string }> = {
   conectando: { text: 'Conectando…', dot: 'bg-yellow-400 animate-pulse', color: 'text-yellow-400' },
@@ -32,30 +31,13 @@ function usePrecioEnVivo() {
   const ultimo = useRef<number | null>(null);
 
   useEffect(() => {
-    let ws: WebSocket | null = null;
-    let reintento: ReturnType<typeof setTimeout> | null = null;
-    let intentos = 0;
-    let cerrado = false;
-
-    const conectar = () => {
-      setEstado('conectando');
-      ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@aggTrade');
-      ws.onopen = () => {
-        intentos = 0;
-        setEstado('conectado');
-      };
-      ws.onmessage = event => {
-        const data = JSON.parse(event.data);
-        ultimo.current = parseFloat(data.p);
-      };
-      ws.onclose = () => {
-        if (cerrado) return;
-        setEstado('desconectado');
-        reintento = setTimeout(conectar, Math.min(30_000, 1000 * 2 ** intentos++));
-      };
-      ws.onerror = () => ws?.close();
-    };
-    conectar();
+    const cerrar = openBinanceStream(
+      'btcusdt@aggTrade',
+      data => {
+        ultimo.current = parseFloat((data as { p: string }).p);
+      },
+      setEstado,
+    );
 
     // Limitamos los renders a 4 por segundo (aggTrade puede enviar decenas de mensajes por segundo).
     const tick = setInterval(() => {
@@ -68,10 +50,8 @@ function usePrecioEnVivo() {
     }, 250);
 
     return () => {
-      cerrado = true;
       clearInterval(tick);
-      if (reintento) clearTimeout(reintento);
-      ws?.close();
+      cerrar();
     };
   }, []);
 
@@ -145,7 +125,7 @@ export default function Dashboard() {
       )}
 
       {/* TARJETAS SUPERIORES */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
           <h2 className="text-sm text-slate-400 mb-1">BTCUSDT · último precio negociado</h2>
           <p className={`text-3xl font-mono font-semibold transition-colors duration-150 ${colorPrecio}`}>
@@ -194,6 +174,36 @@ export default function Dashboard() {
             </>
           )}
         </div>
+
+        <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
+          <h2 className="text-sm text-slate-400 mb-1">Backtest de la estrategia en vivo</h2>
+          {!datos?.backtest ? (
+            <>
+              <p className="text-xl font-semibold text-slate-400 mt-1">Sin backtest guardado</p>
+              <span className="text-xs text-slate-500 mt-2 block">Ejecuta <code>npm run backtest -- --save</code>.</span>
+            </>
+          ) : (
+            <>
+              <p className={`text-3xl font-mono font-semibold ${datos.backtest.avgR >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {signedR(datos.backtest.avgR)}
+                <span className="text-sm text-slate-400 font-sans font-normal"> / operación</span>
+              </p>
+              <span className="text-xs text-slate-400 mt-2 block">
+                {datos.backtest.trades} ops · {Math.round((Date.parse(datos.backtest.periodEnd) - Date.parse(datos.backtest.periodStart)) / 86_400_000)} días ·
+                retorno {datos.backtest.totalReturnPct >= 0 ? '+' : ''}{datos.backtest.totalReturnPct.toFixed(1)}% ·
+                DD −{datos.backtest.maxDrawdownPct.toFixed(1)}%
+                {datos.backtest.profitFactor != null && ` · PF ${datos.backtest.profitFactor.toFixed(2)}`}
+              </span>
+              {datos.backtest.ciLowR > 0 ? (
+                <span className="text-xs text-emerald-400 mt-1 block">IC 95% por encima de 0.</span>
+              ) : (
+                <span className="text-xs text-yellow-400 mt-1 block">
+                  Sin ventaja demostrada (IC 95%: {datos.backtest.ciLowR.toFixed(2)} a {datos.backtest.ciHighR.toFixed(2)} R). Solo Testnet.
+                </span>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* GRÁFICO Y PANEL DE SEÑALES */}
@@ -235,6 +245,11 @@ export default function Dashboard() {
                 🟡 SIN SEÑAL ACTIVA
               </span>
               <p className="text-sm text-slate-300 mt-4">Esperar. El motor avisará por Telegram cuando haya entrada o salida.</p>
+              {regimen?.note && (
+                <p className="text-xs text-slate-400 mt-3 pt-3 border-t border-slate-700/50">
+                  <span className="font-semibold text-slate-300">Por qué no hay señal:</span> {regimen.note}
+                </p>
+              )}
             </div>
           )}
 
