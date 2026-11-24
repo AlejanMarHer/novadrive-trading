@@ -1,5 +1,5 @@
 import { BINANCE_API_URLS } from './config';
-import { fetchJson } from './http';
+import { fetchJson, HttpError } from './http';
 import type { Candle } from './types';
 
 type RawKline = [number, string, string, string, string, string, number, ...unknown[]];
@@ -25,6 +25,23 @@ export function closedOnly(candles: Candle[], now: number = Date.now()): Candle[
     return candles.filter(c => c.closeTime < now);
 }
 
+const bannedUntil = new Map<string, number>();
+
+/**
+ * Binance responde 418 cuando banea la IP (indica hasta cuándo) y 429 cuando se acerca al límite.
+ * En Render gratuito la IP de salida se comparte con otros clientes, así que el baneo puede venir de terceros.
+ */
+export function banUntilFromError(err: unknown, now = Date.now()): number | null {
+    if (!(err instanceof HttpError) || (err.status !== 418 && err.status !== 429)) return null;
+    const m = /banned until (\d{12,})/.exec(err.message);
+    if (m) return Number(m[1]);
+    return now + (err.status === 418 ? 10 : 2) * 60_000;
+}
+
+export function _resetBansForTests(): void {
+    bannedUntil.clear();
+}
+
 export async function fetchKlines(
     symbol: string,
     interval: string,
@@ -35,10 +52,18 @@ export async function fetchKlines(
     if (opts.endTime !== undefined) params.set('endTime', String(opts.endTime));
     const errores: string[] = [];
     for (const base of BINANCE_API_URLS) {
+        const until = bannedUntil.get(base) ?? 0;
+        if (until > Date.now()) {
+            // Insistir mientras Binance tiene la IP baneada puede alargar el baneo.
+            errores.push(`${base}: IP baneada por Binance hasta ${new Date(until).toISOString()} (no se reintenta)`);
+            continue;
+        }
         try {
             return parseKlines(await fetchJson(`${base}/api/v3/klines?${params}`));
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
+            const ban = banUntilFromError(err);
+            if (ban) bannedUntil.set(base, ban);
             errores.push(msg);
             console.warn(`⚠️ Binance falló en ${base}: ${msg}`);
         }

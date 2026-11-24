@@ -24,3 +24,13 @@ test('closedOnly descarta la vela en curso (la última que devuelve Binance)', (
     // A t=3000 ya cerró
     assert.deepEqual(closedOnly(c, 3000).map(x => x.openTime), [1000, 2000]);
 });
+
+test('banUntilFromError lee la hora de fin del baneo de Binance (418)', async () => {
+    const { banUntilFromError } = await import('../src/binance');
+    const { HttpError } = await import('../src/http');
+    const msg = 'HTTP 418 en x: {"code":-1003,"msg":"Way too much request weight used; IP banned until 1795537139870. Please use WebSocket Streams"}';
+    assert.equal(banUntilFromError(new HttpError(msg, 418)), 1795537139870);
+    assert.equal(banUntilFromError(new HttpError('HTTP 429 en x: {}', 429), 1000), 1000 + 2 * 60_000);
+    assert.equal(banUntilFromError(new HttpError('HTTP 400', 400)), null);
+    assert.equal(banUntilFromError(new Error('red')), null);
+});

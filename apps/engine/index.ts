@@ -1,6 +1,7 @@
 import http from 'http';
 import { CYCLE_MINUTES, STRATEGY_NAME, SYMBOL } from './src/config';
 import { logHealth, prisma } from './src/db';
+import { startupSummary } from './src/instance';
 import { runGuardedCycle } from './src/runner';
 
 console.log('===================================================');
@@ -93,7 +94,9 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 
 (async () => {
-    await logHealth('ENGINE', 'STARTED', `${STRATEGY_NAME} ${SYMBOL}`);
+    const resumen = startupSummary();
+    console.log(`ℹ️ ${resumen}`);
+    await logHealth('ENGINE', 'STARTED', resumen);
     await cicloMaestro();
     programarSiguiente();
     iniciarKeepAlive();

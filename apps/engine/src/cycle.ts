@@ -19,6 +19,7 @@ import {
     setState,
 } from './db';
 import { explainNoSignal } from './explain';
+import { instanceLabel } from './instance';
 import { resolveSignal, signalPnlR, STATUS_BY_REASON } from './lifecycle';
 import { backtestLine, dailyReportMessage, downtimeMessage, entryMessage, exitMessage } from './messages';
 import { dailyReportDue, wasDown } from './monitor';
@@ -46,7 +47,7 @@ export async function runCycle(now = new Date()): Promise<void> {
             fetchClosedKlines(SYMBOL, '4h', p.lookback4h),
         ]);
     } catch (err) {
-        await logHealth('BINANCE', 'ERROR', err instanceof Error ? err.message : String(err));
+        await logHealth('BINANCE', 'ERROR', `[${instanceLabel()}] ${err instanceof Error ? err.message : String(err)}`);
         throw err;
     }
 

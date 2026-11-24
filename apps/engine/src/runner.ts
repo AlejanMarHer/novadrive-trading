@@ -1,13 +1,16 @@
 import { randomUUID } from 'crypto';
 import { FAILURE_ALERT_STREAK } from './config';
 import { runCycle } from './cycle';
-import { acquireCycleLock, getState, logHealth, releaseCycleLock, setState } from './db';
+import { acquireCycleLock, getState, lastHeartbeatAt, logHealth, releaseCycleLock, setState } from './db';
+import { instanceLabel } from './instance';
 import { failureMessage, recoveryMessage } from './messages';
 import { enviarTelegramRegistrando } from './telegram';
 
 export type CycleOutcome = 'ok' | 'locked' | 'error';
 
 const STREAK_KEY = 'errorStreak';
+/** Espera entre comprobaciones cuando otro proceso tiene el candado (configurable para tests). */
+const LOCK_WAIT_MS = Number(process.env.LOCK_WAIT_MS ?? 10_000);
 /** Respaldo en memoria por si la BD es justamente lo que falla. */
 let memoryStreak = 0;
 
@@ -40,8 +43,23 @@ export async function runGuardedCycle(source: string): Promise<{ outcome: CycleO
     try {
         locked = await acquireCycleLock(owner);
         if (!locked) {
-            console.log('🔒 Otro proceso está ejecutando un ciclo; se omite este.');
-            return { outcome: 'locked' };
+            // Otro proceso tiene el candado. Si termina bien, escribirá un latido nuevo y no hace falta repetir.
+            // Si falla (p. ej. su IP está baneada por Binance), libera el candado y este proceso hace el ciclo.
+            const start = new Date();
+            for (let i = 0; i < 6 && !locked; i++) {
+                await new Promise(r => setTimeout(r, LOCK_WAIT_MS));
+                const beat = await lastHeartbeatAt();
+                if (beat && beat >= start) {
+                    console.log('🔒 Otro proceso completó el ciclo; se omite este.');
+                    return { outcome: 'locked' };
+                }
+                locked = await acquireCycleLock(owner);
+            }
+            if (!locked) {
+                console.log('🔒 Otro proceso sigue con el candado; se omite este ciclo.');
+                return { outcome: 'locked' };
+            }
+            console.log('🔓 El otro proceso no completó el ciclo; lo ejecuta este.');
         }
         await runCycle();
         const streak = await readStreak();
@@ -53,7 +71,7 @@ export async function runGuardedCycle(source: string): Promise<{ outcome: CycleO
     } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         console.error('❌ Error en el ciclo:', msg);
-        await logHealth('ENGINE', 'ERROR', msg);
+        await logHealth('ENGINE', 'ERROR', `[${instanceLabel()}] ${msg}`);
         const streak = (await readStreak()) + 1;
         await writeStreak(streak);
         if (streak === FAILURE_ALERT_STREAK) await enviarTelegramRegistrando(failureMessage(streak, msg), 'Aviso de fallos');

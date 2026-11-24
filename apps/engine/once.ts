@@ -7,11 +7,13 @@
  */
 import { STRATEGY_NAME, SYMBOL } from './src/config';
 import { prisma } from './src/db';
+import { startupSummary } from './src/instance';
 import { runGuardedCycle } from './src/runner';
 
 (async () => {
     const source = process.env.GITHUB_ACTIONS ? 'github-actions' : 'once';
     console.log(`🤖 Ciclo único ${STRATEGY_NAME} ${SYMBOL} (${source}) — ${new Date().toISOString()}`);
+    console.log(`ℹ️ ${startupSummary()}`);
     const { outcome } = await runGuardedCycle(source);
     await prisma.$disconnect().catch(() => undefined);
     // Un error deja la ejecución en rojo en GitHub Actions; el bloqueo por otro proceso no es un error.
